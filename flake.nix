@@ -50,13 +50,7 @@
             ] ++ lib.optionals stdenv.isLinux [ udev ];
 
             shellHook = ''
-              ${git-hooks.lib.${system}.run {
-                src = ./.;
-                hooks = {
-                  rustfmt.enable = true;
-                  nixpkgs-fmt.enable = true;
-                };
-              }}/bin/install
+              ${self.checks.${system}.pre-commit-checks}/bin/install
             '';
           };
         }
