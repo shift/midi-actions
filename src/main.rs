@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use midir::{MidiInput, Ignore};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use rdev::{simulate, EventType, Key};
+use enigo::{Enigo, Key, KeyboardControllable};
 #[cfg(target_os = "linux")]
 use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, Key as EvdevKey, InputEvent, EventType as EvdevEventType};
 use serde::Deserialize;
@@ -130,9 +130,9 @@ fn run_daemon_mode() -> Result<()> {
                         }
                         #[cfg(any(target_os = "macos", target_os = "windows"))]
                         {
-                            if let Some(key) = string_to_rdev_key(code) {
-                                let _ = simulate(&EventType::KeyPress(key));
-                                let _ = simulate(&EventType::KeyRelease(key));
+                            if let Some(key) = string_to_enigo_key(code) {
+                                let mut enigo = Enigo::new();
+                                let _ = enigo.key_click(key);
                             }
                         }
                     },
@@ -158,7 +158,7 @@ fn run_daemon_mode() -> Result<()> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn string_to_rdev_key(s: &str) -> Option<Key> {
+fn string_to_enigo_key(s: &str) -> Option<Key> {
     match s {
         "KEY_F13" => Some(Key::F13),
         "KEY_F14" => Some(Key::F14),
