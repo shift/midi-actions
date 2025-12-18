@@ -26,11 +26,11 @@ cargo build --release
 
 #### NixOS System Installation
 
-Add the flake to your NixOS configuration:
+For a basic setup, add the flake to your NixOS configuration:
 
 ```nix
 {
-  inputs.midi-actions.url = "github:shift/midi-actions"; # or local path
+  inputs.midi-actions.url = "github:shift/midi-actions";
 
   outputs = { nixpkgs, midi-actions, ... }: {
     nixosConfigurations.yourhost = nixpkgs.lib.nixosSystem {
@@ -48,6 +48,84 @@ Add the flake to your NixOS configuration:
 ```
 
 This sets up the necessary permissions for uinput access.
+
+For a more integrated setup with configuration in Nix, use this custom module wrapper:
+
+```nix
+# midi-actions-wrapper.nix
+{ config, lib, pkgs, ... }:
+
+let
+  cfg = config.services.midi-actions-custom;
+
+  midiActionsPkg = inputs.midi-actions.packages.${pkgs.system}.default;
+
+  configFile = pkgs.writeText "midi-actions-config.toml" ''
+    device_name = "${cfg.deviceName}"
+    
+    [mappings]
+    ${lib.concatStringsSep "\n" (lib.mapAttrsToList (id: action: 
+      if action.type == "Linear" then 
+        "\"${id}\" = { type = \"Linear\", template = \"${action.value}\" }"
+      else if action.type == "Key" then
+        "\"${id}\" = { type = \"Key\", code = \"${action.value}\" }"
+      else
+        "\"${id}\" = { type = \"Command\", cmd = \"${action.value}\" }"
+    ) cfg.mappings)}
+  '';
+
+in {
+  options.services.midi-actions-custom = {
+    enable = lib.mkEnableOption "Custom MIDI Actions Service";
+    deviceName = lib.mkOption { type = lib.types.str; default = "MPD218"; };
+    mappings = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule {
+        options = {
+          type = lib.mkOption { type = lib.types.enum [ "Linear" "Key" "Command" ]; };
+          value = lib.mkOption { type = lib.types.str; };
+        };
+      });
+      description = "Map MIDI IDs (strings) to actions.";
+      example = {
+        "3" = { type = "Linear"; value = "pactl set-sink-volume @DEFAULT_SINK@ {}%"; };
+        "36" = { type = "Key"; value = "KEY_F13"; };
+      };
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    hardware.uinput.enable = true;
+    services.udev.extraRules = ''
+      KERNEL=="uinput", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"
+    '';
+    users.users.${config.users.users.yourusername.name}.extraGroups = [ "uinput" "input" ];
+
+    systemd.user.services.midi-actions = {
+      description = "Midi Actions Daemon";
+      wantedBy = [ "graphical-session.target" ];
+      serviceConfig = {
+        ExecStart = pkgs.writeShellScript "start-midi-actions" ''
+          ln -sf ${configFile} ./config.toml
+          ${midiActionsPkg}/bin/midi-actions
+        '';
+      };
+    };
+  };
+}
+```
+
+Then configure:
+
+```nix
+services.midi-actions-custom = {
+  enable = true;
+  deviceName = "MPD218";
+  mappings = {
+    "3" = { type = "Linear"; value = "pactl set-sink-volume @DEFAULT_SINK@ {}%"; };
+    "36" = { type = "Key"; value = "KEY_F13"; };
+  };
+};
+```
 
 #### Standalone Installation
 
@@ -106,8 +184,11 @@ device_name = "MPD218"
 Run the daemon to start listening for MIDI events:
 
 ```bash
-./target/release/midi-actions
+./midi-actions [--config path/to/config.toml]
 ```
+
+Options:
+- `--config` or `-c`: Path to the configuration file (default: config.toml)
 
 The application will connect to your configured device and execute actions based on the mappings.
 

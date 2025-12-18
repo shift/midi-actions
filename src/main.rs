@@ -13,6 +13,10 @@ use std::{collections::HashMap, process::Command, fs, sync::{Arc, Mutex}};
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Path to the configuration file (default: config.toml)
+    #[arg(short, long)]
+    config: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -39,7 +43,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Commands::Setup) => run_setup_mode(),
-        None => run_daemon_mode(),
+        None => run_daemon_mode(cli.config.as_deref()),
     }
 }
 
@@ -80,8 +84,9 @@ fn run_setup_mode() -> Result<()> {
 }
 
 // --- DAEMON MODE ---
-fn run_daemon_mode() -> Result<()> {
-    let config_str = fs::read_to_string("config.toml").map_err(|_| anyhow!("config.toml not found!"))?;
+fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
+    let config_path = config_path.unwrap_or("config.toml");
+    let config_str = fs::read_to_string(config_path).map_err(|_| anyhow!("{} not found!", config_path))?;
     let config: Config = toml::from_str(&config_str)?;
 
     #[cfg(target_os = "linux")]
@@ -143,6 +148,8 @@ fn run_daemon_mode() -> Result<()> {
                         let mut cache = last_knob_vals.lock().unwrap();
                         let percent = (raw_val as f32 / 127.0 * 100.0) as u32;
 
+                        // Basic caching to avoid spawning processes for unchanged values
+                        // Note: For high-frequency MIDI events, consider debouncing or native APIs
                         if cache.get(&id) != Some(&percent) {
                             let final_cmd = template.replace("{}", &percent.to_string());
                             let _ = Command::new("sh").arg("-c").arg(final_cmd).spawn();
