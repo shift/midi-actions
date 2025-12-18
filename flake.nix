@@ -39,26 +39,26 @@
             };
           };
 
-        # Development shell for 'nix develop'
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            cargo
-            rustc
-            rust-analyzer
-            pkg-config
-            alsa-lib
-          ] ++ lib.optionals stdenv.isLinux [ udev ];
+          # Development shell for 'nix develop'
+          devShells.default = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              cargo
+              rustc
+              rust-analyzer
+              pkg-config
+              alsa-lib
+            ] ++ lib.optionals stdenv.isLinux [ udev ];
 
-          shellHook = ''
-            ${git-hooks.lib.${system}.run {
-              src = ./.;
-              hooks = {
-                rustfmt.enable = true;
-                nixpkgs-fmt.enable = true;
-              };
-            }}/bin/install
-          '';
-        };
+            shellHook = ''
+              ${git-hooks.lib.${system}.run {
+                src = ./.;
+                hooks = {
+                  rustfmt.enable = true;
+                  nixpkgs-fmt.enable = true;
+                };
+              }}/bin/install
+            '';
+          };
         }
       ) // {
       # NixOS module for configuration
