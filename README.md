@@ -111,6 +111,36 @@ Run the daemon to start listening for MIDI events:
 
 The application will connect to your configured device and execute actions based on the mappings.
 
+## Using Other MIDI Devices
+
+This tool works with any MIDI controller, not just the Akai MPD218. To use a different device:
+
+1. **Connect your device** and ensure it's recognized by your system.
+
+2. **Run setup mode** to discover control IDs:
+   ```bash
+   ./midi-actions setup
+   ```
+   Press buttons, knobs, and pads on your device. The tool will output suggested mappings for each control.
+
+3. **Edit `config.toml`**:
+   - Change `device_name` to a unique part of your device's name (check the setup output).
+   - Add mappings under `[mappings]` using the IDs from setup mode.
+   - Example for a different device:
+     ```toml
+     device_name = "YourDevice"
+     [mappings]
+     1 = { type = "Linear", template = "pactl set-sink-volume @DEFAULT_SINK@ {}%" }
+     64 = { type = "Key", code = "KEY_F13" }
+     ```
+
+4. **Run the daemon**:
+   ```bash
+   ./midi-actions
+   ```
+
+Note: Ensure your device sends MIDI messages in the expected format (Note On/Off for pads, Control Change for knobs).
+
 ## Configuration
 
 - `device_name`: Partial name of your MIDI device (must match output from setup mode)
