@@ -18,9 +18,9 @@
           src = ./.; # Assumes Cargo.toml is in the root
           cargoLock.lockFile = ./Cargo.lock;
 
-          # Native dependencies needed for midir (ALSA)
+          # Native dependencies needed for midir (ALSA on Linux)
           nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ pkgs.alsa-lib pkgs.udev ];
+          buildInputs = [ pkgs.alsa-lib ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.udev ];
         };
       in
       {
@@ -29,8 +29,8 @@
         # Development shell for 'nix develop'
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            cargo rustc rust-analyzer pkg-config alsa-lib udev
-          ];
+            cargo rustc rust-analyzer pkg-config alsa-lib
+          ] ++ lib.optionals stdenv.isLinux [ udev ];
         };
       }
     ) // {

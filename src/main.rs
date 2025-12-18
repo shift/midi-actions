@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, Key, InputEvent, EventType};
 use midir::{MidiInput, Ignore};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use rdev::{simulate, EventType, Key};
+#[cfg(target_os = "linux")]
+use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, Key as EvdevKey, InputEvent, EventType as EvdevEventType};
 use serde::Deserialize;
 use std::{collections::HashMap, process::Command, fs, sync::{Arc, Mutex}};
 
@@ -81,13 +84,15 @@ fn run_daemon_mode() -> Result<()> {
     let config_str = fs::read_to_string("config.toml").map_err(|_| anyhow!("config.toml not found!"))?;
     let config: Config = toml::from_str(&config_str)?;
 
+    #[cfg(target_os = "linux")]
     // 1. Setup Virtual Keyboard
-    let mut keys = AttributeSet::<Key>::new();
+    let mut keys = AttributeSet::<EvdevKey>::new();
     for action in config.mappings.values() {
         if let Action::Key { code } = action {
-            if let Ok(k) = code.parse::<Key>() { keys.insert(k); }
+            if let Ok(k) = code.parse::<EvdevKey>() { keys.insert(k); }
         }
     }
+    #[cfg(target_os = "linux")]
     let mut v_device = VirtualDeviceBuilder::new()?.name("midi-actions").with_keys(&keys)?.build()?;
 
     // 2. Setup MIDI
@@ -104,7 +109,7 @@ fn run_daemon_mode() -> Result<()> {
     // 3. Connect
     let _conn = midi_in.connect(&port, "midir-read", move |_, msg, _| {
         if msg.len() < 3 { return; }
-        
+
         let msg_type = msg[0] & 0xf0;
         let id = msg[1];
         let raw_val = msg[2];
@@ -114,11 +119,21 @@ fn run_daemon_mode() -> Result<()> {
             if let Some(action) = config.mappings.get(&id.to_string()) {
                 match action {
                     Action::Key { code } => {
-                        if let Ok(key) = code.parse::<Key>() {
-                            let _ = v_device.emit(&[
-                                InputEvent::new(EventType::KEY, key.code(), 1i32),
-                                InputEvent::new(EventType::KEY, key.code(), 0i32)
-                            ]);
+                        #[cfg(target_os = "linux")]
+                        {
+                            if let Ok(key) = code.parse::<EvdevKey>() {
+                                let _ = v_device.emit(&[
+                                    InputEvent::new(EvdevEventType::KEY, key.code(), 1i32),
+                                    InputEvent::new(EvdevEventType::KEY, key.code(), 0i32)
+                                ]);
+                            }
+                        }
+                        #[cfg(any(target_os = "macos", target_os = "windows"))]
+                        {
+                            if let Some(key) = string_to_rdev_key(code) {
+                                let _ = simulate(&EventType::KeyPress(key));
+                                let _ = simulate(&EventType::KeyRelease(key));
+                            }
                         }
                     },
                     Action::Command { cmd } => {
@@ -127,7 +142,7 @@ fn run_daemon_mode() -> Result<()> {
                     Action::Linear { template } => {
                         let mut cache = last_knob_vals.lock().unwrap();
                         let percent = (raw_val as f32 / 127.0 * 100.0) as u32;
-                        
+
                         if cache.get(&id) != Some(&percent) {
                             let final_cmd = template.replace("{}", &percent.to_string());
                             let _ = Command::new("sh").arg("-c").arg(final_cmd).spawn();
@@ -140,4 +155,14 @@ fn run_daemon_mode() -> Result<()> {
     }, ()).map_err(|e| anyhow!("Connection failed: {}", e))?;
 
     loop { std::thread::sleep(std::time::Duration::from_secs(60)); }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn string_to_rdev_key(s: &str) -> Option<Key> {
+    match s {
+        "KEY_F13" => Some(Key::F13),
+        "KEY_F14" => Some(Key::F14),
+        // Add more as needed
+        _ => None,
+    }
 }

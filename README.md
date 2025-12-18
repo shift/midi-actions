@@ -12,9 +12,9 @@ A Rust application that transforms your Akai MPD218 MIDI controller into additio
 
 ## Installation
 
-This project uses Nix for dependency management. Ensure you have Nix installed.
+This project uses Nix for dependency management on Linux. For macOS/Windows, use Cargo directly.
 
-### Development
+### Linux (Nix)
 
 ```bash
 # Enter the development shell
@@ -24,13 +24,13 @@ nix develop
 cargo build --release
 ```
 
-### NixOS System Installation
+#### NixOS System Installation
 
 Add the flake to your NixOS configuration:
 
 ```nix
 {
-  inputs.midi-actions.url = "path/to/your/flake"; # or github repo
+  inputs.midi-actions.url = "github:shift/midi-actions"; # or local path
 
   outputs = { nixpkgs, midi-actions, ... }: {
     nixosConfigurations.yourhost = nixpkgs.lib.nixosSystem {
@@ -49,11 +49,23 @@ Add the flake to your NixOS configuration:
 
 This sets up the necessary permissions for uinput access.
 
-### Standalone Installation
+#### Standalone Installation
 
 ```bash
 # Install to user profile
 nix profile install .#default
+```
+
+### macOS / Windows
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Clone and build
+git clone https://github.com/shift/midi-actions.git
+cd midi-actions
+cargo build --release --features macos  # or windows
 ```
 
 ## Usage
@@ -109,9 +121,9 @@ The application will connect to your configured device and execute actions based
 
 ## Requirements
 
-- Linux with evdev support
-- PulseAudio (for volume controls)
-- OBS Studio (for streaming control)
+- Linux: evdev support, PulseAudio (for volume controls), OBS Studio (for streaming control)
+- macOS: OBS Studio (for streaming control)
+- Windows: OBS Studio (for streaming control)
 
 ## License
 
