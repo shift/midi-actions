@@ -1,0 +1,26 @@
+# config.toml
+device_name = "MPD218"
+
+[mappings]
+
+# --- KNOBS (Linear Scaling) ---
+# The '{}' is replaced by the calculated percentage (0-100)
+# Knob 1 -> Master Volume
+3 = { type = "Linear", template = "pactl set-sink-volume @DEFAULT_SINK@ {}%" }
+
+# Knob 2 -> Microphone Volume (Source)
+9 = { type = "Linear", template = "pactl set-source-volume @DEFAULT_SOURCE@ {}%" }
+
+14 = { type = "Linear", template = "pactl set-sink-volume @DEFAULT_SINK@ {}%" }
+
+# --- PADS (Simple Actions) ---
+
+# Pad 1 -> OBS "Start Streaming"
+# (We map this to F13, then set F13 as the shortcut in OBS settings)
+36 = { type = "Key", code = "KEY_F13" }
+
+# Pad 2 -> OBS "Switch Scene"
+37 = { type = "Key", code = "KEY_F14" }
+
+# Pad 3 -> Launch Firefox
+38 = { type = "Command", cmd = "firefox" }
