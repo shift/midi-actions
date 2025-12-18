@@ -3,37 +3,54 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url = "github:numtide/flake-utils";
+    git-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs { inherit system overlays; };
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, git-hooks, ... }:
+    flake-utils.lib.eachDefaultSystem
+      (system:
+        let
+          overlays = [ (import rust-overlay) ];
+          pkgs = import nixpkgs { inherit system overlays; };
 
-        # Define the package
-        midi-actions = pkgs.rustPlatform.buildRustPackage {
-          pname = "midi-actions";
-          version = "0.1.0";
-          src = ./.; # Assumes Cargo.toml is in the root
-          cargoLock.lockFile = ./Cargo.lock;
+          # Define the package
+          midi-actions = pkgs.rustPlatform.buildRustPackage {
+            pname = "midi-actions";
+            version = "0.1.0";
+            src = ./.; # Assumes Cargo.toml is in the root
+            cargoLock.lockFile = ./Cargo.lock;
 
-          # Native dependencies needed for midir (ALSA on Linux)
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ pkgs.alsa-lib ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.udev ];
-        };
-      in
-      {
-        packages.default = midi-actions;
+            # Native dependencies needed for midir (ALSA on Linux)
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.alsa-lib ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.udev ];
+          };
+        in
+        {
+          packages.default = midi-actions;
 
-        # Development shell for 'nix develop'
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            cargo rustc rust-analyzer pkg-config alsa-lib
-          ] ++ lib.optionals stdenv.isLinux [ udev ];
-        };
-      }
-    ) // {
+          checks.pre-commit-checks = git-hooks.lib.${system}.run {
+            src = ./.;
+            hooks = {
+              rustfmt.enable = true;
+              nixpkgs-fmt.enable = true;
+            };
+          };
+
+          # Development shell for 'nix develop'
+          devShells.default = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              cargo
+              rustc
+              rust-analyzer
+              pkg-config
+              alsa-lib
+            ] ++ lib.optionals stdenv.isLinux [ udev ];
+          };
+        }
+      ) // {
       # NixOS module for configuration
       nixosModules.default = { config, lib, ... }: {
         options.services.midi-actions = {

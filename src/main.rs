@@ -1,12 +1,20 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use midir::{MidiInput, Ignore};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use enigo::{Enigo, Key, KeyboardControllable};
 #[cfg(target_os = "linux")]
-use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, Key as EvdevKey, InputEvent, EventType as EvdevEventType};
+use evdev::{
+    uinput::VirtualDeviceBuilder, AttributeSet, EventType as EvdevEventType, InputEvent,
+    Key as EvdevKey,
+};
+use midir::{Ignore, MidiInput};
 use serde::Deserialize;
-use std::{collections::HashMap, process::Command, fs, sync::{Arc, Mutex, RwLock}};
+use std::{
+    collections::HashMap,
+    fs,
+    process::Command,
+    sync::{Arc, Mutex, RwLock},
+};
 
 #[derive(Parser)]
 #[command(name = "midi-actions")]
@@ -56,17 +64,19 @@ fn run_setup_mode() -> Result<()> {
     midi_in.ignore(Ignore::None);
 
     let ports = midi_in.ports();
-    if ports.is_empty() { return Err(anyhow!("No MIDI devices found.")); }
+    if ports.is_empty() {
+        return Err(anyhow!("No MIDI devices found."));
+    }
 
     println!("\n🎹 DISCOVERY MODE");
-    let port = &ports[ports.len() - 1]; 
+    let port = &ports[ports.len() - 1];
     println!("Listening to '{}'...", midi_in.port_name(port)?);
     println!("(Press Ctrl+C to stop)\n");
 
     let _conn = midi_in.connect(port, "midir-setup", move |_stamp, msg, _| {
         if msg.len() < 3 { return; }
-        
-        let msg_type = msg[0] & 0xf0; 
+
+        let msg_type = msg[0] & 0xf0;
         let id = msg[1];
         let val = msg[2];
 
@@ -76,14 +86,16 @@ fn run_setup_mode() -> Result<()> {
         if msg_type == 0xB0 {
              println!("# Knob Detected (ID: {})", id);
              println!("\"{}\" = {{ type = \"Linear\", template = \"pactl set-sink-volume @DEFAULT_SINK@ {{}}%\" }}\n", id);
-        } 
+        }
         else if msg_type == 0x90 && val > 0 {
              println!("# Button Detected (ID: {})", id);
              println!("\"{}\" = {{ type = \"Key\", code = \"KEY_F13\" }}\n", id);
         }
     }, ()).map_err(|e| anyhow!("Connection failed: {}", e))?;
 
-    loop { std::thread::sleep(std::time::Duration::from_secs(60)); }
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
 }
 
 // --- DAEMON MODE ---
@@ -91,15 +103,17 @@ fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
     let config_path = config_path.unwrap_or("config.toml");
 
     // Load initial config
-    let config_str = fs::read_to_string(&config_path).map_err(|_| anyhow!("{} not found!", config_path))?;
+    let config_str =
+        fs::read_to_string(&config_path).map_err(|_| anyhow!("{} not found!", config_path))?;
     let config: MidiConfig = toml::from_str(&config_str)?;
 
     // Create runtime mappings with u8 keys
     let runtime_mappings: Arc<RwLock<HashMap<u8, Action>>> = Arc::new(RwLock::new(
-        config.mappings
+        config
+            .mappings
             .into_iter()
             .filter_map(|(k, v)| k.parse::<u8>().ok().map(|id| (id, v)))
-            .collect()
+            .collect(),
     ));
 
     #[cfg(target_os = "linux")]
@@ -107,19 +121,31 @@ fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
     let mut keys = AttributeSet::<EvdevKey>::new();
     for action in runtime_mappings.read().unwrap().values() {
         if let Action::Key { code } = action {
-            if let Ok(k) = code.parse::<EvdevKey>() { keys.insert(k); }
+            if let Ok(k) = code.parse::<EvdevKey>() {
+                keys.insert(k);
+            }
         }
     }
     #[cfg(target_os = "linux")]
-    let mut v_device = VirtualDeviceBuilder::new()?.name("midi-actions").with_keys(&keys)?.build()?;
+    let mut v_device = VirtualDeviceBuilder::new()?
+        .name("midi-actions")
+        .with_keys(&keys)?
+        .build()?;
 
     // TODO: Setup PulseAudio context for native volume control
 
     // 2. Setup MIDI
     let mut midi_in = MidiInput::new("midi-actions-daemon")?;
     midi_in.ignore(Ignore::None);
-    let port = midi_in.ports().into_iter()
-        .find(|p| midi_in.port_name(p).unwrap_or_default().contains(&config.device_name))
+    let port = midi_in
+        .ports()
+        .into_iter()
+        .find(|p| {
+            midi_in
+                .port_name(p)
+                .unwrap_or_default()
+                .contains(&config.device_name)
+        })
         .ok_or(anyhow!("Device '{}' not found", config.device_name))?;
 
     println!("✅ midi-actions Running on {}", midi_in.port_name(&port)?);
@@ -127,61 +153,74 @@ fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
     let last_knob_vals = Arc::new(Mutex::new(HashMap::new()));
 
     // 3. Connect
-    let _conn = midi_in.connect(&port, "midir-read", move |_, msg, _| {
-        if msg.len() < 3 { return; }
+    let _conn = midi_in
+        .connect(
+            &port,
+            "midir-read",
+            move |_, msg, _| {
+                if msg.len() < 3 {
+                    return;
+                }
 
-        let msg_type = msg[0] & 0xf0;
-        let id = msg[1];
-        let raw_val = msg[2];
+                let msg_type = msg[0] & 0xf0;
+                let id = msg[1];
+                let raw_val = msg[2];
 
-        if (msg_type == NOTE_ON && raw_val > 0) || msg_type == CONTROL_CHANGE {
-            if let Some(action) = runtime_mappings.read().unwrap().get(&id) {
-                match action {
-                    Action::Key { code } => {
-                        #[cfg(target_os = "linux")]
-                        {
-                            if let Ok(key) = code.parse::<EvdevKey>() {
-                                if let Err(e) = v_device.emit(&[
-                                    InputEvent::new(EvdevEventType::KEY, key.code(), 1i32),
-                                    InputEvent::new(EvdevEventType::KEY, key.code(), 0i32)
-                                ]) {
-                                    eprintln!("Failed to emit key: {}", e);
+                if (msg_type == NOTE_ON && raw_val > 0) || msg_type == CONTROL_CHANGE {
+                    if let Some(action) = runtime_mappings.read().unwrap().get(&id) {
+                        match action {
+                            Action::Key { code } => {
+                                #[cfg(target_os = "linux")]
+                                {
+                                    if let Ok(key) = code.parse::<EvdevKey>() {
+                                        if let Err(e) = v_device.emit(&[
+                                            InputEvent::new(EvdevEventType::KEY, key.code(), 1i32),
+                                            InputEvent::new(EvdevEventType::KEY, key.code(), 0i32),
+                                        ]) {
+                                            eprintln!("Failed to emit key: {}", e);
+                                        }
+                                    }
+                                }
+                                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                                {
+                                    if let Some(key) = string_to_enigo_key(code) {
+                                        let mut enigo = Enigo::new();
+                                        if let Err(e) = enigo.key_click(key) {
+                                            eprintln!("Failed to simulate key: {}", e);
+                                        }
+                                    }
                                 }
                             }
-                        }
-                        #[cfg(any(target_os = "macos", target_os = "windows"))]
-                        {
-                            if let Some(key) = string_to_enigo_key(code) {
-                                let mut enigo = Enigo::new();
-                                if let Err(e) = enigo.key_click(key) {
-                                    eprintln!("Failed to simulate key: {}", e);
+                            Action::Command { cmd } => {
+                                if let Err(e) = Command::new("sh").arg("-c").arg(cmd).spawn() {
+                                    eprintln!("Failed to spawn command: {}", e);
                                 }
                             }
-                        }
-                    },
-                    Action::Command { cmd } => {
-                        if let Err(e) = Command::new("sh").arg("-c").arg(cmd).spawn() {
-                            eprintln!("Failed to spawn command: {}", e);
-                        }
-                    },
-                    Action::Linear { template } => {
-                        let mut cache = last_knob_vals.lock().unwrap();
-                        let percent = (raw_val as f32 / 127.0 * 100.0) as u32;
+                            Action::Linear { template } => {
+                                let mut cache = last_knob_vals.lock().unwrap();
+                                let percent = (raw_val as f32 / 127.0 * 100.0) as u32;
 
-                        if cache.get(&id) != Some(&percent) {
-                            let final_cmd = template.replace("{}", &percent.to_string());
-                            if let Err(e) = Command::new("sh").arg("-c").arg(final_cmd).spawn() {
-                                eprintln!("Failed to spawn volume command: {}", e);
+                                if cache.get(&id) != Some(&percent) {
+                                    let final_cmd = template.replace("{}", &percent.to_string());
+                                    if let Err(e) =
+                                        Command::new("sh").arg("-c").arg(final_cmd).spawn()
+                                    {
+                                        eprintln!("Failed to spawn volume command: {}", e);
+                                    }
+                                    cache.insert(id, percent);
+                                }
                             }
-                            cache.insert(id, percent);
                         }
                     }
                 }
-            }
-        }
-    }, ()).map_err(|e| anyhow!("Connection failed: {}", e))?;
+            },
+            (),
+        )
+        .map_err(|e| anyhow!("Connection failed: {}", e))?;
 
-    loop { std::thread::sleep(std::time::Duration::from_secs(60)); }
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
