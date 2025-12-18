@@ -10,22 +10,22 @@
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
-        
+
         # Define the package
-        midi-daemon = pkgs.rustPlatform.buildRustPackage {
-          pname = "midi-daemon";
+        midi-actions = pkgs.rustPlatform.buildRustPackage {
+          pname = "midi-actions";
           version = "0.1.0";
           src = ./.; # Assumes Cargo.toml is in the root
           cargoLock.lockFile = ./Cargo.lock;
-          
+
           # Native dependencies needed for midir (ALSA)
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [ pkgs.alsa-lib pkgs.udev ];
         };
       in
       {
-        packages.default = midi-daemon;
-        
+        packages.default = midi-actions;
+
         # Development shell for 'nix develop'
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -33,5 +33,30 @@
           ];
         };
       }
-    );
+    ) // {
+      # NixOS module for configuration
+      nixosModules.default = { config, lib, ... }: {
+        options.services.midi-actions = {
+          enable = lib.mkEnableOption "Enable midi-actions service";
+          user = lib.mkOption {
+            type = lib.types.str;
+            default = "yourusername";
+            description = "User to add to uinput and input groups";
+          };
+        };
+
+        config = lib.mkIf config.services.midi-actions.enable {
+          # Enable uinput
+          hardware.uinput.enable = true;
+
+          # Add user to groups
+          users.users.${config.services.midi-actions.user}.extraGroups = [ "uinput" "input" ];
+
+          # Custom udev rule
+          services.udev.extraRules = ''
+            KERNEL=="uinput", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"
+          '';
+        };
+      };
+    };
 }

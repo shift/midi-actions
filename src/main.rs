@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, process::Command, fs, sync::{Arc, Mutex}};
 
 #[derive(Parser)]
-#[command(name = "midi-hub")]
+#[command(name = "midi-actions")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
 
 // --- SETUP MODE ---
 fn run_setup_mode() -> Result<()> {
-    let mut midi_in = MidiInput::new("midi-hub-setup")?;
+    let mut midi_in = MidiInput::new("midi-actions-setup")?;
     midi_in.ignore(Ignore::None);
 
     let ports = midi_in.ports();
@@ -88,16 +88,16 @@ fn run_daemon_mode() -> Result<()> {
             if let Ok(k) = code.parse::<Key>() { keys.insert(k); }
         }
     }
-    let mut v_device = VirtualDeviceBuilder::new()?.name("MIDI Hub").with_keys(&keys)?.build()?;
+    let mut v_device = VirtualDeviceBuilder::new()?.name("midi-actions").with_keys(&keys)?.build()?;
 
     // 2. Setup MIDI
-    let mut midi_in = MidiInput::new("midi-hub-daemon")?;
+    let mut midi_in = MidiInput::new("midi-actions-daemon")?;
     midi_in.ignore(Ignore::None);
     let port = midi_in.ports().into_iter()
         .find(|p| midi_in.port_name(p).unwrap_or_default().contains(&config.device_name))
         .ok_or(anyhow!("Device '{}' not found", config.device_name))?;
 
-    println!("✅ MIDI Hub Running on {}", midi_in.port_name(&port)?);
+    println!("✅ midi-actions Running on {}", midi_in.port_name(&port)?);
 
     let last_knob_vals = Arc::new(Mutex::new(HashMap::new()));
 
