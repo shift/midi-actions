@@ -6,7 +6,7 @@ use enigo::{Enigo, Key, KeyboardControllable};
 #[cfg(target_os = "linux")]
 use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, Key as EvdevKey, InputEvent, EventType as EvdevEventType};
 use serde::Deserialize;
-use std::{collections::HashMap, process::Command, fs, sync::{Arc, Mutex}};
+use std::{collections::HashMap, process::Command, fs, sync::{Arc, Mutex, RwLock}};
 
 #[derive(Parser)]
 #[command(name = "midi-actions")]
@@ -25,7 +25,7 @@ enum Commands {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-struct Config {
+struct MidiConfig {
     device_name: String,
     // Keys in TOML are always strings
     mappings: HashMap<String, Action>,
@@ -38,6 +38,9 @@ enum Action {
     Command { cmd: String },
     Linear { template: String },
 }
+
+const NOTE_ON: u8 = 0x90;
+const CONTROL_CHANGE: u8 = 0xB0;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -86,19 +89,31 @@ fn run_setup_mode() -> Result<()> {
 // --- DAEMON MODE ---
 fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
     let config_path = config_path.unwrap_or("config.toml");
-    let config_str = fs::read_to_string(config_path).map_err(|_| anyhow!("{} not found!", config_path))?;
-    let config: Config = toml::from_str(&config_str)?;
+
+    // Load initial config
+    let config_str = fs::read_to_string(&config_path).map_err(|_| anyhow!("{} not found!", config_path))?;
+    let config: MidiConfig = toml::from_str(&config_str)?;
+
+    // Create runtime mappings with u8 keys
+    let runtime_mappings: Arc<RwLock<HashMap<u8, Action>>> = Arc::new(RwLock::new(
+        config.mappings
+            .into_iter()
+            .filter_map(|(k, v)| k.parse::<u8>().ok().map(|id| (id, v)))
+            .collect()
+    ));
 
     #[cfg(target_os = "linux")]
     // 1. Setup Virtual Keyboard
     let mut keys = AttributeSet::<EvdevKey>::new();
-    for action in config.mappings.values() {
+    for action in runtime_mappings.read().unwrap().values() {
         if let Action::Key { code } = action {
             if let Ok(k) = code.parse::<EvdevKey>() { keys.insert(k); }
         }
     }
     #[cfg(target_os = "linux")]
     let mut v_device = VirtualDeviceBuilder::new()?.name("midi-actions").with_keys(&keys)?.build()?;
+
+    // TODO: Setup PulseAudio context for native volume control
 
     // 2. Setup MIDI
     let mut midi_in = MidiInput::new("midi-actions-daemon")?;
@@ -119,40 +134,45 @@ fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
         let id = msg[1];
         let raw_val = msg[2];
 
-        if (msg_type == 0x90 && raw_val > 0) || msg_type == 0xB0 {
-            // FIX: Convert the MIDI ID (u8) to String for lookup
-            if let Some(action) = config.mappings.get(&id.to_string()) {
+        if (msg_type == NOTE_ON && raw_val > 0) || msg_type == CONTROL_CHANGE {
+            if let Some(action) = runtime_mappings.read().unwrap().get(&id) {
                 match action {
                     Action::Key { code } => {
                         #[cfg(target_os = "linux")]
                         {
                             if let Ok(key) = code.parse::<EvdevKey>() {
-                                let _ = v_device.emit(&[
+                                if let Err(e) = v_device.emit(&[
                                     InputEvent::new(EvdevEventType::KEY, key.code(), 1i32),
                                     InputEvent::new(EvdevEventType::KEY, key.code(), 0i32)
-                                ]);
+                                ]) {
+                                    eprintln!("Failed to emit key: {}", e);
+                                }
                             }
                         }
                         #[cfg(any(target_os = "macos", target_os = "windows"))]
                         {
                             if let Some(key) = string_to_enigo_key(code) {
                                 let mut enigo = Enigo::new();
-                                let _ = enigo.key_click(key);
+                                if let Err(e) = enigo.key_click(key) {
+                                    eprintln!("Failed to simulate key: {}", e);
+                                }
                             }
                         }
                     },
                     Action::Command { cmd } => {
-                        let _ = Command::new("sh").arg("-c").arg(cmd).spawn();
+                        if let Err(e) = Command::new("sh").arg("-c").arg(cmd).spawn() {
+                            eprintln!("Failed to spawn command: {}", e);
+                        }
                     },
                     Action::Linear { template } => {
                         let mut cache = last_knob_vals.lock().unwrap();
                         let percent = (raw_val as f32 / 127.0 * 100.0) as u32;
 
-                        // Basic caching to avoid spawning processes for unchanged values
-                        // Note: For high-frequency MIDI events, consider debouncing or native APIs
                         if cache.get(&id) != Some(&percent) {
                             let final_cmd = template.replace("{}", &percent.to_string());
-                            let _ = Command::new("sh").arg("-c").arg(final_cmd).spawn();
+                            if let Err(e) = Command::new("sh").arg("-c").arg(final_cmd).spawn() {
+                                eprintln!("Failed to spawn volume command: {}", e);
+                            }
                             cache.insert(id, percent);
                         }
                     }
