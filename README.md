@@ -122,8 +122,8 @@ The application will connect to your configured device and execute actions based
 ## Requirements
 
 - Linux: evdev support, PulseAudio (for volume controls), OBS Studio (for streaming control)
-- macOS: OBS Studio (for streaming control)
-- Windows: OBS Studio (for streaming control)
+- macOS: OBS Studio (for streaming control) - **Untested** (developer lacks hardware)
+- Windows: OBS Studio (for streaming control) - **Untested** (developer lacks hardware)
 
 ## License
 
