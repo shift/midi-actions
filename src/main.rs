@@ -45,6 +45,10 @@ enum Action {
     Key { code: String },
     Command { cmd: String },
     Linear { template: String },
+    Relative { 
+        inc_cmd: String, 
+        dec_cmd: String 
+    },
 }
 
 const NOTE_ON: u8 = 0x90;
@@ -151,6 +155,7 @@ fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
     println!("✅ midi-actions Running on {}", midi_in.port_name(&port)?);
 
     let last_knob_vals = Arc::new(Mutex::new(HashMap::new()));
+    let last_knob_directions = Arc::new(Mutex::new(HashMap::new()));
 
     // 3. Connect
     let _conn = midi_in
@@ -209,6 +214,28 @@ fn run_daemon_mode(config_path: Option<&str>) -> Result<()> {
                                     }
                                     cache.insert(id, percent);
                                 }
+                            }
+                            Action::Relative { inc_cmd, dec_cmd } => {
+                                let mut cache = last_knob_vals.lock().unwrap();
+                                let mut directions = last_knob_directions.lock().unwrap();
+                                
+                                // Get previous value, default to current if not found
+                                let prev_val = *cache.get(&id).unwrap_or(&raw_val);
+                                cache.insert(id, raw_val);
+                                
+                                // Determine direction based on value change
+                                if raw_val > prev_val {
+                                    // Knob turned right/increased
+                                    if let Err(e) = Command::new("sh").arg("-c").arg(inc_cmd).spawn() {
+                                        eprintln!("Failed to spawn relative increment command: {}", e);
+                                    }
+                                } else if raw_val < prev_val {
+                                    // Knob turned left/decreased
+                                    if let Err(e) = Command::new("sh").arg("-c").arg(dec_cmd).spawn() {
+                                        eprintln!("Failed to spawn relative decrement command: {}", e);
+                                    }
+                                }
+                                // If raw_val == prev_val, no action needed
                             }
                         }
                     }
